@@ -1,0 +1,20 @@
+node_modules/
+.expo/
+dist/
+web-build/
+coverage/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Native build output
+android/
+ios/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

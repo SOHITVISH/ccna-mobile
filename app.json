@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "PacketPath",
+    "slug": "packetpath-ccna",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#F5F7FB"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.packetpath.ccna"
+    },
+    "android": {
+      "package": "com.packetpath.ccna",
+      "adaptiveIcon": {
+        "backgroundColor": "#F5F7FB"
+      }
+    }
+  }
+}
