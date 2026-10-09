@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { allTopics, curriculum } from "./curriculum";
+import { allDomains, allTopics } from "./curriculum";
 import { glossary } from "./glossary";
-import { lessonContent } from "./lessonContent";
+import { lessonContent } from "./courseData";
 import { colors } from "./theme";
 
 type Message = { id: string; role: "assistant" | "user"; text: string };
@@ -12,6 +12,8 @@ const suggestions = [
   "Explain subnet masks simply",
   "When does a switch flood a frame?",
   "Help me understand OSPF neighbors",
+  "Explain BGP route selection",
+  "How does VRF isolation work?",
   "What does an ACL do?",
 ];
 
@@ -40,14 +42,14 @@ function answerFromCourse(prompt: string, contextTopicId?: string) {
       : undefined;
 
   if (!selected || (ranked[0]?.score ?? 0) === 0) {
-    return "I can help with the CCNA topics in this app, but I couldn't match that question yet. Try asking about a specific concept such as subnetting, VLAN trunks, OSPF, DHCP, ACLs, or JSON.";
+    return "I couldn't match that question to a lesson yet. Try a course concept such as subnetting, VLAN trunks, OSPF, BGP, VRF, IPsec, DHCP relay, ACLs, or automation.";
   }
 
   const details = lessonContent[selected.id];
   const definition = glossary.find((entry) =>
     normalized.includes(entry.term.toLowerCase()) && entry.term.length > 2
   );
-  const matchingDomain = curriculum.find((domain) => domain.id === selected.domainId);
+  const matchingDomain = allDomains.find((domain) => domain.id === selected.domainId);
   return [
     `${selected.title} — ${matchingDomain?.title ?? selected.domainTitle}`,
     details.deepDive[0],
@@ -71,7 +73,7 @@ export function TutorScreen({ initialTopicId }: { initialTopicId?: string }) {
       role: "assistant",
       text: topic
         ? `I'm here to help you work through ${topic.title}. Ask me to rephrase the idea, give another example, or explain a step in its lab.`
-        : "Ask about a CCNA networking concept. I'll find the closest lesson in the course and explain it with a practical example.",
+        : "Ask about a CCNA or CCNP Enterprise concept. I'll find the closest course lesson and explain it with a practical example.",
     }]);
   }, [initialTopicId]);
 
@@ -140,7 +142,7 @@ export function TutorScreen({ initialTopicId }: { initialTopicId?: string }) {
           onChangeText={setDraft}
           onSubmitEditing={() => sendMessage(draft)}
           returnKeyType="send"
-          placeholder="Ask about a CCNA concept..."
+          placeholder="Ask about a networking concept..."
           placeholderTextColor="#97A1AF"
           style={styles.input}
           accessibilityLabel="Ask the PacketPath course tutor"

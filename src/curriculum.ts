@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { ComponentProps } from "react";
+import { ccnpCurriculum } from "./ccnpContent";
+export { ccnpCurriculum };
 
 export type Topic = {
   id: string;
@@ -14,6 +16,7 @@ export type Domain = {
   weight: number;
   color: string;
   icon: ComponentProps<typeof Ionicons>["name"];
+  exam?: "CCNA" | "ENCOR" | "ENARSI";
   topics: Topic[];
 };
 
@@ -122,8 +125,20 @@ export const curriculum: Domain[] = [
   }
 ];
 
-export const allTopics = curriculum.flatMap((domain) =>
-  domain.topics.map((topic) => ({ ...topic, domainId: domain.id, domainTitle: domain.title, domainColor: domain.color }))
+export const allDomains: Domain[] = [...curriculum, ...ccnpCurriculum];
+
+export const domainsForTrack = (track: "CCNA" | "CCNP Enterprise") =>
+  track === "CCNA" ? curriculum : ccnpCurriculum;
+
+export const allTopics = allDomains.flatMap((domain) =>
+  domain.topics.map((topic) => ({
+    ...topic,
+    domainId: domain.id,
+    domainTitle: domain.title,
+    domainColor: domain.color,
+    track: domain.exam === "ENCOR" || domain.exam === "ENARSI" ? "CCNP Enterprise" as const : "CCNA" as const,
+    exam: domain.exam ?? "CCNA" as const
+  }))
 );
 
 export const topicById = (id: string) => allTopics.find((topic) => topic.id === id);

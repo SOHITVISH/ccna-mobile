@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,14 +13,16 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { allTopics, curriculum, topicById, type Domain, type Topic } from "./src/curriculum";
+import { allTopics, domainsForTrack, topicById, type Domain, type Topic } from "./src/curriculum";
 import { glossary } from "./src/glossary";
-import { lessonContent } from "./src/lessonContent";
-import { quizBank, type QuizQuestion } from "./src/quizBank";
+import { lessonContent, quizBank } from "./src/courseData";
+import type { QuizQuestion } from "./src/quizBank";
+import { NetworkLabScreen } from "./src/NetworkLabScreen";
 import { TutorScreen } from "./src/TutorScreen";
 import { colors } from "./src/theme";
 
 type Tab = "Learn" | "Path" | "Labs" | "Resources" | "Profile";
+type Track = "CCNA" | "CCNP Enterprise";
 type StudyNote = { id: string; text: string; createdAt: string };
 type Progress = { completed: string[]; labCompleted: string[]; streak: number; lastStudyDate?: string; bestExamScore: number | null };
 const STORAGE_KEY = "packetpath.progress.v1";
@@ -43,7 +46,9 @@ export default function App() {
 
 function AppContent() {
   const [tab, setTab] = useState<Tab>("Learn");
+  const [track, setTrack] = useState<Track>("CCNA");
   const [activeTopicId, setActiveTopicId] = useState<string | null>(null);
+  const [deviceLabTopicId, setDeviceLabTopicId] = useState<string | undefined>();
   const [examActive, setExamActive] = useState(false);
   const [activeDomainId, setActiveDomainId] = useState<string | null>(null);
   const [resourceSection, setResourceSection] = useState<"Glossary" | "Notes" | "Tutor">("Glossary");
@@ -57,7 +62,9 @@ function AppContent() {
   const [selectedLabAnswer, setSelectedLabAnswer] = useState<number | null>(null);
   const [search, setSearch] = useState("");
 
-  const totalTopicCount = curriculum.reduce((total, domain) => total + domain.topics.length, 0);
+  const activeCurriculum = domainsForTrack(track);
+  const activeTopics = allTopics.filter((topic) => topic.track === track);
+  const totalTopicCount = activeTopics.length;
   useEffect(() => {
     let mounted = true;
     AsyncStorage.getItem(STORAGE_KEY)
@@ -134,9 +141,9 @@ function AppContent() {
   }, [notesHydrated, notes]);
 
   const activeTopic = activeTopicId ? topicById(activeTopicId) : undefined;
-  const completedCount = progress.completed.length;
-  const currentDomain = curriculum.find((domain) => domain.id === activeDomainId);
-  const suggestedTopic = allTopics.find((topic) => !progress.completed.includes(topic.id)) ?? allTopics[0];
+  const completedCount = activeTopics.filter((topic) => progress.completed.includes(topic.id)).length;
+  const currentDomain = activeCurriculum.find((domain) => domain.id === activeDomainId);
+  const suggestedTopic = allTopics.find((topic) => topic.track === track && !progress.completed.includes(topic.id)) ?? activeTopics[0];
   const yesterdayDate = new Date();
   yesterdayDate.setDate(yesterdayDate.getDate() - 1);
   const todayKey = localDateKey(new Date());
@@ -239,6 +246,12 @@ function AppContent() {
           selectedLabAnswer={selectedLabAnswer}
           onSelectLabAnswer={setSelectedLabAnswer}
           onAskTutor={() => openTutorForTopic(activeTopic.id)}
+          onOpenNetworkLab={() => {
+            setDeviceLabTopicId(activeTopic.id);
+            setActiveTopicId(null);
+            setActiveDomainId(null);
+            setTab("Labs");
+          }}
         />
       </SafeAreaView>
     );
@@ -249,6 +262,7 @@ function AppContent() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
         <PracticeExam
+          track={track}
           onExit={() => setExamActive(false)}
           onResult={handleExamResult}
           bestScore={progress.bestExamScore}
@@ -268,6 +282,12 @@ function AppContent() {
         >
           {tab === "Learn" && (
             <LearnScreen
+              domains={activeCurriculum}
+              track={track}
+              onTrackChange={(nextTrack) => {
+                setTrack(nextTrack);
+                setActiveDomainId(null);
+              }}
               completedCount={completedCount}
               totalTopicCount={totalTopicCount}
               streak={currentStreak}
@@ -285,7 +305,12 @@ function AppContent() {
           )}
           {tab === "Path" && (
             <PathScreen
-              domains={curriculum}
+              domains={activeCurriculum}
+              track={track}
+              onTrackChange={(nextTrack) => {
+                setTrack(nextTrack);
+                setActiveDomainId(null);
+              }}
               completed={progress.completed}
               totalTopicCount={totalTopicCount}
               selectedDomain={currentDomain}
@@ -297,19 +322,24 @@ function AppContent() {
             />
           )}
           {tab === "Labs" && (
-            <LabsScreen
-              prefix={prefix}
-              hostCount={hostCount}
-              onPrefix={setPrefix}
-              completed={progress.completed.includes("ipv4-subnetting")}
-              onOpen={() => {
-                const topic = topicById("ipv4-subnetting");
-                if (topic) openTopic(topic);
-              }}
-            />
+            <>
+              <NetworkLabScreen topic={deviceLabTopicId ? topicById(deviceLabTopicId) : undefined} />
+              <LabsScreen
+                track={track}
+                prefix={prefix}
+                hostCount={hostCount}
+                onPrefix={setPrefix}
+                completed={progress.completed.includes("ipv4-subnetting")}
+                onOpen={() => {
+                  const topic = topicById("ipv4-subnetting");
+                  if (topic) openTopic(topic);
+                }}
+              />
+            </>
           )}
           {tab === "Resources" && (
             <ResourcesScreen
+              track={track}
               initialSection={resourceSection}
               initialTutorTopicId={tutorTopicId}
               notes={notes}
@@ -320,6 +350,9 @@ function AppContent() {
           )}
           {tab === "Profile" && (
             <ProfileScreen
+              domains={activeCurriculum}
+              track={track}
+              totalTopicCount={totalTopicCount}
               completedCount={completedCount}
               streak={currentStreak}
               bestExamScore={progress.bestExamScore}
@@ -344,13 +377,13 @@ function AppContent() {
   );
 }
 
-function Header({ eyebrow, title, subtitle }: { eyebrow: string; title: string; subtitle?: string }) {
+function Header({ eyebrow, title, subtitle, track = "CCNA" }: { eyebrow: string; title: string; subtitle?: string; track?: Track }) {
   return (
     <View style={styles.header}>
       <View style={styles.brandRow}>
         <View style={styles.brandMark}><Ionicons name="git-network" size={17} color="#FFFFFF" /></View>
         <Text style={styles.brand}>PacketPath</Text>
-        <View style={styles.streakBadge}><Text style={styles.streakFlame}>✦</Text><Text style={styles.streakText}>CCNA</Text></View>
+        <View style={styles.streakBadge}><Text style={styles.streakFlame}>✦</Text><Text style={styles.streakText}>{track === "CCNA" ? "CCNA" : "CCNP"}</Text></View>
       </View>
       <Text style={styles.eyebrow}>{eyebrow.toUpperCase()}</Text>
       <Text style={styles.pageTitle}>{title}</Text>
@@ -359,19 +392,66 @@ function Header({ eyebrow, title, subtitle }: { eyebrow: string; title: string; 
   );
 }
 
+function TrackSelector({ track, onChange }: { track: Track; onChange: (track: Track) => void }) {
+  return (
+    <View style={{ flexDirection: "row", gap: 8, marginBottom: 14, padding: 4, backgroundColor: "#EAF0F8", borderRadius: 13 }}>
+      {(["CCNA", "CCNP Enterprise"] as const).map((item) => (
+        <Pressable
+          key={item}
+          accessibilityRole="button"
+          accessibilityState={{ selected: track === item }}
+          onPress={() => onChange(item)}
+          style={{ flex: 1, alignItems: "center", paddingVertical: 10, borderRadius: 10, backgroundColor: track === item ? "#FFFFFF" : "transparent" }}
+        >
+          <Text style={{ fontSize: 11, fontWeight: "800", color: track === item ? colors.blue : colors.muted }}>{item}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function OfficialCiscoCard({ track }: { track: Track }) {
+  const links = track === "CCNA"
+    ? [{ label: "CCNA 200-301 exam information", url: "https://www.cisco.com/site/us/en/learn/training-certifications/exams/ccna.html" }]
+    : [
+        { label: "CCNP Enterprise certification", url: "https://www.cisco.com/site/us/en/learn/training-certifications/certifications/enterprise/ccnp-enterprise/index.html" },
+        { label: "350-401 ENCOR exam topics", url: "https://www.cisco.com/site/us/en/learn/training-certifications/exams/encor.html" },
+        { label: "300-410 ENARSI exam topics", url: "https://www.cisco.com/site/us/en/learn/training-certifications/exams/enarsi.html" },
+      ];
+  return (
+    <View style={{ marginTop: 12, marginBottom: 16, padding: 15, borderRadius: 16, backgroundColor: "#F0F5FB", borderWidth: 1, borderColor: "#DDE7F2" }}>
+      <Text style={{ fontSize: 12, fontWeight: "800", color: colors.ink }}>Cisco official references</Text>
+      <Text style={{ fontSize: 10, lineHeight: 15, color: colors.muted, marginTop: 4, marginBottom: 8 }}>Use Cisco’s current exam pages as the authority for objectives and updates. PacketPath’s lesson text and lab scenarios are original study aids.</Text>
+      {links.map((link) => (
+        <Pressable key={link.url} onPress={() => {
+          Linking.openURL(link.url).catch((error: unknown) => {
+            console.error(`Unable to open Cisco reference ${link.url}.`, error);
+            Alert.alert("Unable to open reference", "Check your internet connection and try again.");
+          });
+        }} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 7 }}>
+          <Text style={{ color: colors.blue, fontSize: 10, fontWeight: "700", flex: 1 }}>{link.label}</Text>
+          <Ionicons name="open-outline" size={15} color={colors.blue} />
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 function LearnScreen({
-  completedCount, totalTopicCount, streak, suggestedTopic, onContinue, onPracticeExam, onDomain, onTab,
+  domains, track, onTrackChange, completedCount, totalTopicCount, streak, suggestedTopic, onContinue, onPracticeExam, onDomain, onTab,
 }: {
+  domains: Domain[]; track: Track; onTrackChange: (track: Track) => void;
   completedCount: number; totalTopicCount: number; streak: number; onContinue: () => void;
   suggestedTopic: (typeof allTopics)[number];
   onPracticeExam: () => void;
   onDomain: (domain: Domain) => void; onTab: (tab: Tab) => void;
 }) {
-  const suggestedDomain = curriculum.find((domain) => domain.id === suggestedTopic.domainId);
+  const suggestedDomain = domains.find((domain) => domain.id === suggestedTopic.domainId);
   const suggestedLessonNumber = (suggestedDomain?.topics.findIndex((topic) => topic.id === suggestedTopic.id) ?? 0) + 1;
   return (
     <View>
-      <Header eyebrow="Your learning space" title="Build your network IQ." subtitle="Small steps. Strong foundations. CCNA ready." />
+      <TrackSelector track={track} onChange={onTrackChange} />
+      <Header eyebrow="Your learning space" title="Build your network IQ." subtitle={track === "CCNA" ? "Small steps. Strong foundations. CCNA ready." : "Advanced enterprise routing, switching, security, and automation."} track={track} />
       <View style={styles.statsRow}>
         <View style={[styles.statCard, styles.statCardBlue]}>
           <Text style={styles.statLabel}>STUDY STREAK</Text>
@@ -381,7 +461,7 @@ function LearnScreen({
         <View style={styles.statCard}>
           <Text style={styles.statLabel}>LESSONS DONE</Text>
           <Text style={styles.statValue}>{completedCount}<Text style={styles.statSmall}> / {totalTopicCount}</Text></Text>
-          <Text style={styles.statHint}>Across all domains</Text>
+          <Text style={styles.statHint}>In this track</Text>
         </View>
       </View>
       <View style={styles.sectionHeading}>
@@ -412,15 +492,16 @@ function LearnScreen({
         <Text style={styles.sectionTitle}>Your learning path</Text>
         <Pressable onPress={() => onTab("Path")}><Text style={styles.linkText}>See all</Text></Pressable>
       </View>
-      <Text style={styles.sectionIntro}>Six exam domains, one confident you.</Text>
-      {curriculum.map((domain) => (
+      <Text style={styles.sectionIntro}>{track === "CCNA" ? "Six CCNA exam domains, one confident you." : "ENCOR core plus ENARSI advanced routing and services."}</Text>
+      {domains.map((domain) => (
         <DomainCard key={domain.id} domain={domain} onPress={() => onDomain(domain)} />
       ))}
+      <OfficialCiscoCard track={track} />
       <View style={styles.miniLabCard}>
         <View style={styles.miniLabIcon}><Ionicons name="flask-outline" size={20} color="#8B64DA" /></View>
         <View style={styles.flexOne}>
           <Text style={styles.miniLabTitle}>Ready to get hands-on?</Text>
-          <Text style={styles.miniLabCopy}>Try the subnetting mini lab</Text>
+          <Text style={styles.miniLabCopy}>Subnet, segment, route, and configure devices</Text>
         </View>
         <Pressable style={styles.textArrow} onPress={() => onTab("Labs")}><Ionicons name="arrow-forward" size={18} color="#8B64DA" /></Pressable>
       </View>
@@ -432,7 +513,7 @@ function LearnScreen({
         </View>
         <Ionicons name="arrow-forward" size={16} color="#287F68" />
       </Pressable>
-      <Text style={styles.footerNote}>Aligned to the CCNA 200-301 exam topics</Text>
+      <Text style={styles.footerNote}>{track === "CCNA" ? "Aligned to the CCNA 200-301 exam topics." : "Aligned to the CCNP Enterprise ENCOR and ENARSI exam topics."} PacketPath lessons are original study material.</Text>
     </View>
   );
 }
@@ -445,7 +526,7 @@ function DomainCard({ domain, onPress }: { domain: Domain; onPress: () => void }
       </View>
       <View style={styles.flexOne}>
         <Text style={styles.domainTitle}>{domain.title}</Text>
-        <Text style={styles.domainMeta}>{domain.weight}% exam weight  ·  {domain.topics.length} topics</Text>
+        <Text style={styles.domainMeta}>{domain.weight}% {domain.exam ?? "CCNA"} exam weight  ·  {domain.topics.length} topics</Text>
       </View>
       <Ionicons name="chevron-forward" size={17} color="#A4ADBA" />
     </Pressable>
@@ -453,9 +534,9 @@ function DomainCard({ domain, onPress }: { domain: Domain; onPress: () => void }
 }
 
 function PathScreen({
-  domains, completed, totalTopicCount, selectedDomain, search, onSearch, onDomain, onBack, onOpenTopic,
+  domains, track, onTrackChange, completed, totalTopicCount, selectedDomain, search, onSearch, onDomain, onBack, onOpenTopic,
 }: {
-  domains: Domain[]; completed: string[]; totalTopicCount: number; selectedDomain?: Domain; search: string;
+  domains: Domain[]; track: Track; onTrackChange: (track: Track) => void; completed: string[]; totalTopicCount: number; selectedDomain?: Domain; search: string;
   onSearch: (value: string) => void; onDomain: (domain: Domain) => void; onBack: () => void; onOpenTopic: (topic: Topic) => void;
 }) {
   const topicsForDomain = (domain: Domain) => {
@@ -470,11 +551,12 @@ function PathScreen({
 
   return (
     <View>
-      <Header eyebrow="Study roadmap" title={selectedDomain?.title ?? "The full picture."} subtitle={selectedDomain ? `${selectedDomain.weight}% of the CCNA exam · ${selectedDomain.topics.length} topics` : "Everything you need, organized one topic at a time."} />
+      {!selectedDomain && <TrackSelector track={track} onChange={onTrackChange} />}
+      <Header eyebrow="Study roadmap" title={selectedDomain?.title ?? (track === "CCNA" ? "The full picture." : "Enterprise, end to end.")} subtitle={selectedDomain ? `${selectedDomain.weight}% of the ${selectedDomain.exam ?? "CCNA"} exam · ${selectedDomain.topics.length} topics` : track === "CCNA" ? "Everything you need, organized one topic at a time." : "ENCOR core plus ENARSI advanced routing and services."} track={track} />
       {selectedDomain ? (
         <View>
           <Pressable style={styles.backLink} onPress={onBack}>
-            <Ionicons name="arrow-back" size={16} color={colors.blue} /><Text style={styles.backLinkText}>All exam domains</Text>
+            <Ionicons name="arrow-back" size={16} color={colors.blue} /><Text style={styles.backLinkText}>All {track} domains</Text>
           </Pressable>
           <View style={styles.domainSummary}>
             <View style={[styles.domainIconLarge, { backgroundColor: `${selectedDomain.color}18` }]}>
@@ -482,7 +564,7 @@ function PathScreen({
             </View>
             <View style={styles.flexOne}>
               <Text style={styles.domainSummaryTitle}>{selectedDomain.title}</Text>
-              <Text style={styles.domainSummaryMeta}>{selectedDomain.weight}% exam weight</Text>
+              <Text style={styles.domainSummaryMeta}>{selectedDomain.weight}% {selectedDomain.exam ?? "CCNA"} exam weight</Text>
             </View>
           </View>
           {selectedDomain.topics.map((topic, index) => (
@@ -508,7 +590,7 @@ function PathScreen({
           <View style={styles.overallProgress}>
             <View style={styles.progressTop}>
               <Text style={styles.overallLabel}>YOUR CURRICULUM</Text>
-              <Text style={styles.overallCount}>{completed.length} lessons completed</Text>
+              <Text style={styles.overallCount}>{completed.filter((id) => domains.some((domain) => domain.topics.some((topic) => topic.id === id))).length} lessons completed</Text>
             </View>
             <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.min(100, Math.round(completed.length / totalTopicCount * 100))}%` }]} /></View>
           </View>
@@ -521,7 +603,7 @@ function PathScreen({
                   <View style={[styles.domainIcon, { backgroundColor: `${domain.color}18` }]}><Ionicons name={domain.icon} size={19} color={domain.color} /></View>
                   <View style={styles.flexOne}>
                     <Text style={styles.domainTitle}>{domain.title}</Text>
-                    <Text style={styles.domainMeta}>{domain.weight}% exam weight · {visibleTopics.length} topics</Text>
+                    <Text style={styles.domainMeta}>{domain.weight}% {domain.exam ?? "CCNA"} exam weight · {visibleTopics.length} topics</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={17} color="#A4ADBA" />
                 </Pressable>
@@ -536,6 +618,7 @@ function PathScreen({
             );
           })}
           {search && !domains.some((domain) => topicsForDomain(domain).length > 0) && <Text style={styles.emptySearch}>No topics found. Try a different search.</Text>}
+          <OfficialCiscoCard track={track} />
         </View>
       )}
     </View>
@@ -543,8 +626,9 @@ function PathScreen({
 }
 
 function LabsScreen({
-  prefix, hostCount, onPrefix, completed, onOpen,
+  track, prefix, hostCount, onPrefix, completed, onOpen,
 }: {
+  track: Track;
   prefix: string; hostCount: number | null; onPrefix: (value: string) => void;
   completed: boolean; onOpen: () => void;
 }) {
@@ -562,7 +646,7 @@ function LabsScreen({
         : `2⁽³²⁻${parsedPrefix}⁾ − 2 = ${hostCount} usable host addresses`;
   return (
     <View>
-      <Header eyebrow="Practice by doing" title="The lab bench." subtitle="Get hands-on with the concepts that make networks click." />
+      <Header eyebrow="Practice by doing" title="The lab bench." subtitle="Get hands-on with the concepts that make networks click." track={track} />
       <View style={styles.labSelector}>
         {(["Subnet", "VLAN", "ACL"] as const).map((name) => (
           <Pressable key={name} onPress={() => setLab(name)} style={[styles.labSelectorItem, lab === name && styles.labSelectorItemActive]}>
@@ -667,8 +751,9 @@ function LabsScreen({
 }
 
 function ResourcesScreen({
-  notes, onAddNote, onDeleteNote, initialSection, initialTutorTopicId, onSectionChange,
+  track, notes, onAddNote, onDeleteNote, initialSection, initialTutorTopicId, onSectionChange,
 }: {
+  track: Track;
   notes: StudyNote[]; onAddNote: (text: string) => void; onDeleteNote: (id: string) => void;
   initialSection: "Glossary" | "Notes" | "Tutor"; initialTutorTopicId?: string;
   onSectionChange: (section: "Glossary" | "Notes" | "Tutor") => void;
@@ -690,7 +775,7 @@ function ResourcesScreen({
 
   return (
     <View>
-      <Header eyebrow="Quick reference" title={section === "Glossary" ? "Network, in plain English." : section === "Notes" ? "Your study notebook." : "Ask the course tutor."} subtitle={section === "Glossary" ? "A pocket reference for the terms you'll see throughout the course." : section === "Notes" ? "Your notes stay saved on this device." : "Find explanations and examples from the course."} />
+      <Header eyebrow="Quick reference" title={section === "Glossary" ? "Network, in plain English." : section === "Notes" ? "Your study notebook." : "Ask the course tutor."} subtitle={section === "Glossary" ? "A pocket reference for the terms you'll see throughout the course." : section === "Notes" ? "Your notes stay saved on this device." : "Find explanations and examples from the course."} track={track} />
       <View style={styles.resourceSwitch}>
         {(["Glossary", "Notes", "Tutor"] as const).map((item) => (
           <Pressable key={item} onPress={() => { setSection(item); onSectionChange(item); setSearch(""); }} style={[styles.resourceSwitchItem, section === item && styles.resourceSwitchItemActive]}>
@@ -767,21 +852,23 @@ function ResourcesScreen({
   );
 }
 
-function ProfileScreen({ completedCount, streak, bestExamScore, onReset }: { completedCount: number; streak: number; bestExamScore: number | null; onReset: () => void }) {
+function ProfileScreen({ domains, track, totalTopicCount, completedCount, streak, bestExamScore, onReset }: {
+  domains: Domain[]; track: Track; totalTopicCount: number; completedCount: number; streak: number; bestExamScore: number | null; onReset: () => void;
+}) {
   return (
     <View>
-      <Header eyebrow="Your progress" title="Look how far you've come." subtitle="Every concept learned is one step closer to exam day." />
+      <Header eyebrow="Your progress" title="Look how far you've come." subtitle="Every concept learned is one step closer to exam day." track={track} />
       <View style={styles.profileHero}>
         <View style={styles.avatar}><Ionicons name="person" size={28} color={colors.blue} /></View>
         <Text style={styles.profileName}>Network learner</Text>
-        <Text style={styles.profileSubtitle}>CCNA 200-301 study journey</Text>
+        <Text style={styles.profileSubtitle}>{track === "CCNA" ? "CCNA 200-301 study journey" : "CCNP Enterprise · ENCOR + ENARSI"}</Text>
       </View>
       <View style={styles.profileStats}>
-        <View style={styles.profileStat}><Text style={styles.profileStatValue}>{completedCount}</Text><Text style={styles.profileStatLabel}>LESSONS DONE</Text></View>
+        <View style={styles.profileStat}><Text style={styles.profileStatValue}>{completedCount}/{totalTopicCount}</Text><Text style={styles.profileStatLabel}>LESSONS DONE</Text></View>
         <View style={styles.profileStatDivider} />
         <View style={styles.profileStat}><Text style={styles.profileStatValue}>{streak}</Text><Text style={styles.profileStatLabel}>DAY STREAK</Text></View>
         <View style={styles.profileStatDivider} />
-        <View style={styles.profileStat}><Text style={styles.profileStatValue}>{curriculum.length}</Text><Text style={styles.profileStatLabel}>DOMAINS</Text></View>
+        <View style={styles.profileStat}><Text style={styles.profileStatValue}>{domains.length}</Text><Text style={styles.profileStatLabel}>DOMAINS</Text></View>
       </View>
       <View style={styles.bestScoreCard}>
         <View style={styles.bestScoreIcon}><Ionicons name="trophy-outline" size={20} color="#D79032" /></View>
@@ -789,8 +876,8 @@ function ProfileScreen({ completedCount, streak, bestExamScore, onReset }: { com
         <Text style={styles.bestScoreValue}>{bestExamScore === null ? "—" : `${bestExamScore}%`}</Text>
       </View>
       <Text style={styles.sectionTitle}>Exam blueprint</Text>
-      <Text style={[styles.sectionIntro, { marginBottom: 12 }]}>Study time follows the official domain weighting.</Text>
-      {curriculum.map((domain) => (
+      <Text style={[styles.sectionIntro, { marginBottom: 12 }]}>{track === "CCNA" ? "CCNA domain weights." : "ENCOR and ENARSI weights are shown separately; they each total 100%."}</Text>
+      {domains.map((domain) => (
         <View key={domain.id} style={styles.blueprintRow}>
           <View style={[styles.blueprintDot, { backgroundColor: domain.color }]} />
           <Text style={styles.blueprintName}>{domain.title}</Text>
@@ -811,7 +898,7 @@ function ProfileScreen({ completedCount, streak, bestExamScore, onReset }: { com
 }
 
 function LessonScreen({
-  topic, completed, selectedAnswer, onSelectAnswer, onBack, onComplete, onAskTutor,
+  topic, completed, selectedAnswer, onSelectAnswer, onBack, onComplete, onAskTutor, onOpenNetworkLab,
   completedLabSteps, onToggleLabStep, selectedLabAnswer, onSelectLabAnswer,
 }: {
   topic: Topic & { domainId: string; domainTitle: string; domainColor: string };
@@ -819,6 +906,7 @@ function LessonScreen({
   onBack: () => void; onComplete: () => void; onAskTutor: () => void;
   completedLabSteps: boolean[]; onToggleLabStep: (stepIndex: number) => void;
   selectedLabAnswer: number | null; onSelectLabAnswer: (answer: number) => void;
+  onOpenNetworkLab: () => void;
 }) {
   const question = quizBank[topic.id];
   const lesson = lessonContent[topic.id];
@@ -871,10 +959,18 @@ function LessonScreen({
         {lab.command && (
           <View style={styles.commandCard}>
             <View style={styles.commandHeader}><Ionicons name="terminal-outline" size={15} color="#A8C4FF" /><Text style={styles.commandLabel}>ILLUSTRATIVE IOS COMMAND</Text></View>
-            <Text selectable style={styles.commandCode}>{lab.command}</Text>
+            {lab.command.split("\n").map((line, index) => <Text key={`${topic.id}-command-${index}`} selectable style={styles.commandCode}>{line}</Text>)}
             <Text style={styles.commandDisclaimer}>Example syntax only; platform support and exact configuration vary by device and software version.</Text>
           </View>
         )}
+        <Pressable style={styles.tutorPromptCard} onPress={onOpenNetworkLab}>
+          <View style={styles.tutorPromptIcon}><Ionicons name="terminal-outline" size={18} color={colors.blue} /></View>
+          <View style={styles.flexOne}>
+            <Text style={styles.tutorPromptTitle}>Configure it in the network lab</Text>
+            <Text style={styles.tutorPromptCopy}>Open the simulated switch, router, and firewall CLI</Text>
+          </View>
+          <Ionicons name="arrow-forward" size={16} color={colors.blue} />
+        </Pressable>
         <Pressable style={styles.tutorPromptCard} onPress={onAskTutor}>
           <View style={styles.tutorPromptIcon}><Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.blue} /></View>
           <View style={styles.flexOne}>
@@ -991,10 +1087,19 @@ type PracticeQuestion = {
   question: QuizQuestion;
 };
 
-function makePracticeSet(): PracticeQuestion[] {
-  const questionCounts = [2, 2, 3, 1, 2, 2];
+function makePracticeSet(domains: Domain[]): PracticeQuestion[] {
+  const totalWeight = domains.reduce((sum, domain) => sum + domain.weight, 0);
+  const allocations = domains.map((domain) => {
+    const exact = 12 * domain.weight / totalWeight;
+    return { domain, count: Math.floor(exact), remainder: exact - Math.floor(exact) };
+  });
+  let questionsLeft = 12 - allocations.reduce((sum, item) => sum + item.count, 0);
+  allocations.sort((a, b) => b.remainder - a.remainder);
+  for (let index = 0; questionsLeft > 0; index += 1, questionsLeft -= 1) {
+    allocations[index % allocations.length].count += 1;
+  }
   const selected: PracticeQuestion[] = [];
-  curriculum.forEach((domain, domainIndex) => {
+  allocations.forEach(({ domain, count }) => {
     const domainQuestions = domain.topics.flatMap((topic) => {
       const question = quizBank[topic.id];
       return question ? [{ topicTitle: topic.title, domainTitle: domain.title, domainColor: domain.color, question }] : [];
@@ -1003,17 +1108,20 @@ function makePracticeSet(): PracticeQuestion[] {
       const swapIndex = Math.floor(Math.random() * (index + 1));
       [domainQuestions[index], domainQuestions[swapIndex]] = [domainQuestions[swapIndex], domainQuestions[index]];
     }
-    selected.push(...domainQuestions.slice(0, questionCounts[domainIndex]));
+    selected.push(...domainQuestions.slice(0, count));
   });
   return selected;
 }
 
 function PracticeExam({
-  onExit, onResult, bestScore,
+  track, onExit, onResult, bestScore,
 }: {
+  track: Track;
   onExit: () => void; onResult: (score: number) => void; bestScore: number | null;
 }) {
-  const [questions, setQuestions] = useState(makePracticeSet);
+  const domains = domainsForTrack(track);
+  const examLabel = track === "CCNA" ? "CCNA 200-301" : "CCNP Enterprise · ENCOR + ENARSI";
+  const [questions, setQuestions] = useState(() => makePracticeSet(domains));
   const [answers, setAnswers] = useState<(number | null)[]>(() => questions.map(() => null));
   const [currentIndex, setCurrentIndex] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(15 * 60);
@@ -1037,7 +1145,7 @@ function PracticeExam({
   }, [submitted, score, questions.length, onResult]);
 
   const restart = () => {
-    const nextQuestions = makePracticeSet();
+    const nextQuestions = makePracticeSet(domains);
     setQuestions(nextQuestions);
     setAnswers(nextQuestions.map(() => null));
     setCurrentIndex(0);
@@ -1065,7 +1173,7 @@ function PracticeExam({
         <Pressable style={styles.lessonBack} onPress={leave}><Ionicons name="close" size={20} color={colors.ink} /></Pressable>
         <View style={styles.flexOne}>
           <Text style={styles.examHeaderTitle}>{submitted ? "Exam results" : "Practice exam"}</Text>
-          <Text style={styles.examHeaderSubtitle}>CCNA 200-301 · 12 questions</Text>
+          <Text style={styles.examHeaderSubtitle}>{examLabel} · 12 questions</Text>
         </View>
         {!submitted && <View style={[styles.timerBadge, secondsLeft < 60 && styles.timerUrgent]}><Ionicons name="time-outline" size={15} color={secondsLeft < 60 ? "#C45461" : colors.blue} /><Text style={[styles.timerText, secondsLeft < 60 && styles.timerTextUrgent]}>{timeLabel}</Text></View>}
       </View>
