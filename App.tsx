@@ -153,7 +153,7 @@ function AppContent() {
         : current.lastStudyDate === yesterday
           ? current.streak + 1
           : 1;
-      return { completed: [...current.completed, topicId], streak, lastStudyDate: today };
+      return { ...current, completed: [...current.completed, topicId], streak, lastStudyDate: today };
     });
   };
 
