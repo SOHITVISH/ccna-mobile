@@ -28,6 +28,9 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Test assessment content and scoring
+        run: npm test
+
       - name: Validate Expo configuration
         run: npx expo config --type public
 

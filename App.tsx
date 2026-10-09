@@ -18,6 +18,8 @@ import { glossary } from "./src/glossary";
 import { lessonContent, quizBank } from "./src/courseData";
 import type { QuizQuestion } from "./src/quizBank";
 import { NetworkLabScreen } from "./src/NetworkLabScreen";
+import { PracticeExamScreen } from "./src/PracticeExamScreen";
+import { TopicQuestionSetScreen } from "./src/TopicQuestionSetScreen";
 import { TutorScreen } from "./src/TutorScreen";
 import { colors } from "./src/theme";
 
@@ -48,6 +50,7 @@ function AppContent() {
   const [tab, setTab] = useState<Tab>("Learn");
   const [track, setTrack] = useState<Track>("CCNA");
   const [activeTopicId, setActiveTopicId] = useState<string | null>(null);
+  const [activeQuizTopicId, setActiveQuizTopicId] = useState<string | null>(null);
   const [deviceLabTopicId, setDeviceLabTopicId] = useState<string | undefined>();
   const [examActive, setExamActive] = useState(false);
   const [activeDomainId, setActiveDomainId] = useState<string | null>(null);
@@ -152,6 +155,7 @@ function AppContent() {
     : 0;
 
   const openTopic = (topic: Topic) => {
+    setActiveQuizTopicId(null);
     setActiveTopicId(topic.id);
     setSelectedAnswer(null);
     setSelectedLabAnswer(null);
@@ -246,6 +250,10 @@ function AppContent() {
           selectedLabAnswer={selectedLabAnswer}
           onSelectLabAnswer={setSelectedLabAnswer}
           onAskTutor={() => openTutorForTopic(activeTopic.id)}
+          onOpenQuestionSet={() => {
+            setActiveTopicId(null);
+            setActiveQuizTopicId(activeTopic.id);
+          }}
           onOpenNetworkLab={() => {
             setDeviceLabTopicId(activeTopic.id);
             setActiveTopicId(null);
@@ -257,15 +265,41 @@ function AppContent() {
     );
   }
 
+  if (activeQuizTopicId) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="dark" />
+        <TopicQuestionSetScreen
+          topicId={activeQuizTopicId}
+          onBack={() => {
+            const topic = topicById(activeQuizTopicId);
+            setActiveQuizTopicId(null);
+            if (topic) setActiveTopicId(topic.id);
+          }}
+        />
+      </SafeAreaView>
+    );
+  }
+
   if (examActive) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
-        <PracticeExam
+        <PracticeExamScreen
           track={track}
           onExit={() => setExamActive(false)}
           onResult={handleExamResult}
           bestScore={progress.bestExamScore}
+          onOpenTopic={(topicId) => {
+            const topic = topicById(topicId);
+            if (!topic) return;
+            setExamActive(false);
+            setActiveQuizTopicId(null);
+            setTrack(topic.track);
+            setActiveTopicId(topic.id);
+            setSelectedAnswer(null);
+            setSelectedLabAnswer(null);
+          }}
         />
       </SafeAreaView>
     );
@@ -484,7 +518,7 @@ function LearnScreen({
         <View style={styles.examLaunchIcon}><Ionicons name="timer-outline" size={19} color="#FFFFFF" /></View>
         <View style={styles.flexOne}>
           <Text style={styles.examLaunchTitle}>Take a practice exam</Text>
-          <Text style={styles.examLaunchCopy}>12 questions · timed · exam-weighted</Text>
+          <Text style={styles.examLaunchCopy}>Quick, domain, and full-length modes</Text>
         </View>
         <Ionicons name="arrow-forward" size={17} color={colors.blue} />
       </Pressable>
@@ -899,11 +933,12 @@ function ProfileScreen({ domains, track, totalTopicCount, completedCount, streak
 
 function LessonScreen({
   topic, completed, selectedAnswer, onSelectAnswer, onBack, onComplete, onAskTutor, onOpenNetworkLab,
-  completedLabSteps, onToggleLabStep, selectedLabAnswer, onSelectLabAnswer,
+  onOpenQuestionSet, completedLabSteps, onToggleLabStep, selectedLabAnswer, onSelectLabAnswer,
 }: {
   topic: Topic & { domainId: string; domainTitle: string; domainColor: string };
   completed: boolean; selectedAnswer: number | null; onSelectAnswer: (answer: number) => void;
   onBack: () => void; onComplete: () => void; onAskTutor: () => void;
+  onOpenQuestionSet: () => void;
   completedLabSteps: boolean[]; onToggleLabStep: (stepIndex: number) => void;
   selectedLabAnswer: number | null; onSelectLabAnswer: (answer: number) => void;
   onOpenNetworkLab: () => void;
@@ -1009,6 +1044,14 @@ function LessonScreen({
               <Text style={styles.feedbackText}>{selectedAnswer === correctAnswer ? question.explanation : `Review the explanation: ${question.explanation}`}</Text>
             </View>
           )}
+          <Pressable style={styles.tutorPromptCard} onPress={onOpenQuestionSet}>
+            <View style={styles.tutorPromptIcon}><Ionicons name="help-buoy-outline" size={18} color={colors.blue} /></View>
+            <View style={styles.flexOne}>
+              <Text style={styles.tutorPromptTitle}>Practice all 8 topic questions</Text>
+              <Text style={styles.tutorPromptCopy}>Single-choice, multi-select, ordering, and output simlets</Text>
+            </View>
+            <Ionicons name="arrow-forward" size={16} color={colors.blue} />
+          </Pressable>
         </View>
         <View style={styles.labGuideCard}>
           <View style={styles.labGuideHeader}>
