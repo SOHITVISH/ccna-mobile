@@ -14,15 +14,17 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { allTopics, curriculum, topicById, type Domain, type Topic } from "./src/curriculum";
 import { glossary } from "./src/glossary";
+import { lessonContent } from "./src/lessonContent";
 import { quizBank, type QuizQuestion } from "./src/quizBank";
+import { TutorScreen } from "./src/TutorScreen";
 import { colors } from "./src/theme";
 
 type Tab = "Learn" | "Path" | "Labs" | "Resources" | "Profile";
 type StudyNote = { id: string; text: string; createdAt: string };
-type Progress = { completed: string[]; streak: number; lastStudyDate?: string; bestExamScore: number | null };
+type Progress = { completed: string[]; labCompleted: string[]; streak: number; lastStudyDate?: string; bestExamScore: number | null };
 const STORAGE_KEY = "packetpath.progress.v1";
 const NOTES_STORAGE_KEY = "packetpath.notes.v1";
-const initialProgress: Progress = { completed: [], streak: 0, bestExamScore: null };
+const initialProgress: Progress = { completed: [], labCompleted: [], streak: 0, bestExamScore: null };
 
 function localDateKey(date: Date) {
   const year = date.getFullYear();
@@ -44,12 +46,15 @@ function AppContent() {
   const [activeTopicId, setActiveTopicId] = useState<string | null>(null);
   const [examActive, setExamActive] = useState(false);
   const [activeDomainId, setActiveDomainId] = useState<string | null>(null);
+  const [resourceSection, setResourceSection] = useState<"Glossary" | "Notes" | "Tutor">("Glossary");
+  const [tutorTopicId, setTutorTopicId] = useState<string | undefined>();
   const [progress, setProgress] = useState<Progress>(initialProgress);
   const [notes, setNotes] = useState<StudyNote[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [notesHydrated, setNotesHydrated] = useState(false);
   const [prefix, setPrefix] = useState("26");
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [selectedLabAnswer, setSelectedLabAnswer] = useState<number | null>(null);
   const [search, setSearch] = useState("");
 
   const totalTopicCount = curriculum.reduce((total, domain) => total + domain.topics.length, 0);
@@ -67,6 +72,9 @@ function AppContent() {
           ) {
             setProgress({
               completed: parsed.completed.filter((item): item is string => typeof item === "string" && allTopics.some((topic) => topic.id === item)),
+              labCompleted: "labCompleted" in parsed && Array.isArray(parsed.labCompleted)
+                ? parsed.labCompleted.filter((item): item is string => typeof item === "string" && item.split(":").length === 2 && allTopics.some((topic) => topic.id === item.split(":")[0]))
+                : [],
               streak: "streak" in parsed && typeof parsed.streak === "number" ? Math.max(0, Math.floor(parsed.streak)) : 0,
               lastStudyDate: "lastStudyDate" in parsed && typeof parsed.lastStudyDate === "string" ? parsed.lastStudyDate : undefined,
               bestExamScore: "bestExamScore" in parsed && typeof parsed.bestExamScore === "number" ? Math.max(0, Math.min(100, Math.floor(parsed.bestExamScore))) : null,
@@ -139,6 +147,25 @@ function AppContent() {
   const openTopic = (topic: Topic) => {
     setActiveTopicId(topic.id);
     setSelectedAnswer(null);
+    setSelectedLabAnswer(null);
+  };
+
+  const openTutorForTopic = (topicId: string) => {
+    setActiveTopicId(null);
+    setActiveDomainId(null);
+    setTutorTopicId(topicId);
+    setResourceSection("Tutor");
+    setTab("Resources");
+  };
+
+  const toggleLabStep = (topicId: string, stepIndex: number) => {
+    const key = `${topicId}:${stepIndex}`;
+    setProgress((current) => ({
+      ...current,
+      labCompleted: current.labCompleted.includes(key)
+        ? current.labCompleted.filter((item) => item !== key)
+        : [...current.labCompleted, key],
+    }));
   };
 
   const completeTopic = (topicId: string) => {
@@ -166,8 +193,8 @@ function AppContent() {
 
   const backToTab = () => {
     setActiveTopicId(null);
-    setActiveDomainId(null);
     setSelectedAnswer(null);
+    setSelectedLabAnswer(null);
   };
 
   const hostCount = useMemo(() => {
@@ -205,6 +232,13 @@ function AppContent() {
             completeTopic(activeTopic.id);
             backToTab();
           }}
+          completedLabSteps={lessonContent[activeTopic.id].lab.steps.map((_, index) =>
+            progress.labCompleted.includes(`${activeTopic.id}:${index}`)
+          )}
+          onToggleLabStep={(index) => toggleLabStep(activeTopic.id, index)}
+          selectedLabAnswer={selectedLabAnswer}
+          onSelectLabAnswer={setSelectedLabAnswer}
+          onAskTutor={() => openTutorForTopic(activeTopic.id)}
         />
       </SafeAreaView>
     );
@@ -276,9 +310,12 @@ function AppContent() {
           )}
           {tab === "Resources" && (
             <ResourcesScreen
+              initialSection={resourceSection}
+              initialTutorTopicId={tutorTopicId}
               notes={notes}
               onAddNote={(text) => setNotes((current) => [{ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, text, createdAt: new Date().toISOString() }, ...current])}
               onDeleteNote={(id) => setNotes((current) => current.filter((note) => note.id !== id))}
+              onSectionChange={setResourceSection}
             />
           )}
           {tab === "Profile" && (
@@ -630,13 +667,18 @@ function LabsScreen({
 }
 
 function ResourcesScreen({
-  notes, onAddNote, onDeleteNote,
+  notes, onAddNote, onDeleteNote, initialSection, initialTutorTopicId, onSectionChange,
 }: {
   notes: StudyNote[]; onAddNote: (text: string) => void; onDeleteNote: (id: string) => void;
+  initialSection: "Glossary" | "Notes" | "Tutor"; initialTutorTopicId?: string;
+  onSectionChange: (section: "Glossary" | "Notes" | "Tutor") => void;
 }) {
-  const [section, setSection] = useState<"Glossary" | "Notes">("Glossary");
+  const [section, setSection] = useState<"Glossary" | "Notes" | "Tutor">(initialSection);
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
+  useEffect(() => {
+    setSection(initialSection);
+  }, [initialSection]);
   const normalizedSearch = search.trim().toLowerCase();
   const matchingTerms = glossary.filter((entry) =>
     !normalizedSearch ||
@@ -648,15 +690,16 @@ function ResourcesScreen({
 
   return (
     <View>
-      <Header eyebrow="Quick reference" title={section === "Glossary" ? "Network, in plain English." : "Your study notebook."} subtitle={section === "Glossary" ? "A pocket reference for the terms you'll see throughout the course." : "Your notes stay saved on this device."} />
+      <Header eyebrow="Quick reference" title={section === "Glossary" ? "Network, in plain English." : section === "Notes" ? "Your study notebook." : "Ask the course tutor."} subtitle={section === "Glossary" ? "A pocket reference for the terms you'll see throughout the course." : section === "Notes" ? "Your notes stay saved on this device." : "Find explanations and examples from the course."} />
       <View style={styles.resourceSwitch}>
-        {(["Glossary", "Notes"] as const).map((item) => (
-          <Pressable key={item} onPress={() => { setSection(item); setSearch(""); }} style={[styles.resourceSwitchItem, section === item && styles.resourceSwitchItemActive]}>
-            <Ionicons name={item === "Glossary" ? "book-outline" : "create-outline"} size={15} color={section === item ? colors.blue : colors.muted} />
+        {(["Glossary", "Notes", "Tutor"] as const).map((item) => (
+          <Pressable key={item} onPress={() => { setSection(item); onSectionChange(item); setSearch(""); }} style={[styles.resourceSwitchItem, section === item && styles.resourceSwitchItemActive]}>
+            <Ionicons name={item === "Glossary" ? "book-outline" : item === "Notes" ? "create-outline" : "chatbubble-ellipses-outline"} size={15} color={section === item ? colors.blue : colors.muted} />
             <Text style={[styles.resourceSwitchText, section === item && styles.resourceSwitchTextActive]}>{item}</Text>
           </Pressable>
         ))}
       </View>
+      {section === "Tutor" && <TutorScreen initialTopicId={initialTutorTopicId} />}
       {section === "Notes" && (
         <View style={styles.noteComposer}>
           <Text style={styles.noteComposerTitle}>Capture a useful takeaway</Text>
@@ -684,11 +727,11 @@ function ResourcesScreen({
           </Pressable>
         </View>
       )}
-      <View style={styles.searchBox}>
+      {section !== "Tutor" && <View style={styles.searchBox}>
         <Ionicons name="search-outline" size={18} color={colors.muted} />
         <TextInput value={search} onChangeText={setSearch} placeholder={section === "Glossary" ? "Search networking terms" : "Search your notes"} placeholderTextColor="#9AA4B2" style={styles.searchInput} />
         {search.length > 0 && <Pressable onPress={() => setSearch("")}><Ionicons name="close-circle" size={17} color="#A4ADBA" /></Pressable>}
-      </View>
+      </View>}
       {section === "Glossary" ? (
         matchingTerms.map((entry) => (
           <View key={entry.term} style={styles.glossaryCard}>
@@ -699,7 +742,7 @@ function ResourcesScreen({
             <Text style={styles.glossaryDefinition}>{entry.definition}</Text>
           </View>
         ))
-      ) : matchingNotes.length > 0 ? (
+      ) : section === "Notes" && matchingNotes.length > 0 ? (
         matchingNotes.map((note) => (
           <View key={note.id} style={styles.savedNoteCard}>
             <View style={styles.savedNoteTop}>
@@ -711,15 +754,15 @@ function ResourcesScreen({
             <Text style={styles.savedNoteText}>{note.text}</Text>
           </View>
         ))
-      ) : (
+      ) : section === "Notes" ? (
         <View style={styles.emptyNotes}>
           <Ionicons name="document-text-outline" size={25} color="#9AA4B2" />
           <Text style={styles.emptyNotesTitle}>{normalizedSearch ? "No matching notes" : "Your notebook is ready"}</Text>
           <Text style={styles.emptyNotesCopy}>{normalizedSearch ? "Try another search term." : "Save a concept, command, or reminder above."}</Text>
         </View>
-      )}
+      ) : null}
       {section === "Glossary" && matchingTerms.length === 0 && <Text style={styles.emptySearch}>No matching terms. Try another search.</Text>}
-      <Text style={styles.footerNote}>Definitions are concise study aids; verify configuration details against current Cisco documentation.</Text>
+      {section !== "Tutor" && <Text style={styles.footerNote}>Definitions are concise study aids; verify configuration details against current Cisco documentation.</Text>}
     </View>
   );
 }
@@ -768,21 +811,27 @@ function ProfileScreen({ completedCount, streak, bestExamScore, onReset }: { com
 }
 
 function LessonScreen({
-  topic, completed, selectedAnswer, onSelectAnswer, onBack, onComplete,
+  topic, completed, selectedAnswer, onSelectAnswer, onBack, onComplete, onAskTutor,
+  completedLabSteps, onToggleLabStep, selectedLabAnswer, onSelectLabAnswer,
 }: {
   topic: Topic & { domainId: string; domainTitle: string; domainColor: string };
   completed: boolean; selectedAnswer: number | null; onSelectAnswer: (answer: number) => void;
-  onBack: () => void; onComplete: () => void;
+  onBack: () => void; onComplete: () => void; onAskTutor: () => void;
+  completedLabSteps: boolean[]; onToggleLabStep: (stepIndex: number) => void;
+  selectedLabAnswer: number | null; onSelectLabAnswer: (answer: number) => void;
 }) {
   const question = quizBank[topic.id];
-  const isSubnetLesson = topic.id === "ipv4-subnetting";
+  const lesson = lessonContent[topic.id];
+  const lab = lesson.lab;
   const correctAnswer = question.answer;
+  const labComplete = completedLabSteps.every(Boolean) && selectedLabAnswer === lab.answer;
+  const lessonComplete = selectedAnswer === correctAnswer && labComplete;
   return (
     <View style={styles.lessonScreen}>
       <View style={styles.lessonTopBar}>
         <Pressable style={styles.lessonBack} onPress={onBack}><Ionicons name="arrow-back" size={20} color={colors.ink} /></Pressable>
-        <View style={styles.lessonProgressTrack}><View style={[styles.lessonProgressFill, { backgroundColor: topic.domainColor, width: completed || selectedAnswer === correctAnswer ? "100%" : selectedAnswer !== null ? "70%" : "45%" }]} /></View>
-        <Text style={styles.lessonStep}>{completed ? "DONE" : selectedAnswer === correctAnswer ? "2/2" : selectedAnswer !== null ? "REVIEW" : "1/2"}</Text>
+        <View style={styles.lessonProgressTrack}><View style={[styles.lessonProgressFill, { backgroundColor: topic.domainColor, width: completed ? "100%" : lessonComplete ? "100%" : labComplete || selectedAnswer === correctAnswer ? "72%" : selectedAnswer !== null || selectedLabAnswer !== null ? "48%" : "25%" }]} /></View>
+        <Text style={styles.lessonStep}>{completed ? "DONE" : lessonComplete ? "READY" : `${completedLabSteps.filter(Boolean).length}/${lab.steps.length} LAB`}</Text>
       </View>
       <ScrollView contentContainerStyle={styles.lessonScroll} showsVerticalScrollIndicator={false}>
         <View style={[styles.lessonTag, { backgroundColor: `${topic.domainColor}15` }]}>
@@ -791,66 +840,143 @@ function LessonScreen({
         </View>
         <Text style={styles.lessonTitle}>{topic.title}</Text>
         <Text style={styles.lessonLead}>{topic.explanation}</Text>
-        <View style={styles.lessonVisual}>
-          {isSubnetLesson ? <SubnetVisual /> : <GenericVisual topic={topic} />}
+        <View style={styles.learningCard}>
+          <View style={styles.learningCardHeader}>
+            <View style={styles.learningCardIcon}><Ionicons name="flag-outline" size={17} color={topic.domainColor} /></View>
+            <View style={styles.flexOne}>
+              <Text style={styles.learningCardTitle}>What you’ll learn</Text>
+              <Text style={styles.learningCardSub}>Lesson objectives</Text>
+            </View>
+          </View>
+          {lesson.learningObjectives.map((objective, index) => (
+            <View key={`${topic.id}-objective-${index}`} style={styles.objectiveRow}>
+              <View style={[styles.objectiveNumber, { backgroundColor: `${topic.domainColor}18` }]}><Text style={[styles.objectiveNumberText, { color: topic.domainColor }]}>{index + 1}</Text></View>
+              <Text style={styles.objectiveText}>{objective}</Text>
+            </View>
+          ))}
         </View>
+        <Text style={styles.lessonSectionTitle}>Understand the concept</Text>
+        {lesson.deepDive.map((paragraph, index) => (
+          <View key={`${topic.id}-concept-${index}`} style={styles.deepDiveCard}>
+            <View style={styles.deepDiveMarker}><Text style={styles.deepDiveMarkerText}>{String(index + 1).padStart(2, "0")}</Text></View>
+            <Text style={styles.deepDiveText}>{paragraph}</Text>
+          </View>
+        ))}
         <View style={styles.exampleCard}>
-          <View style={styles.exampleHeader}><Ionicons name="sparkles-outline" size={17} color="#D79032" /><Text style={styles.exampleLabel}>REAL-WORLD EXAMPLE</Text></View>
+          <View style={styles.exampleHeader}><Ionicons name="sparkles-outline" size={17} color="#D79032" /><Text style={styles.exampleLabel}>WORKED, REAL-WORLD EXAMPLE</Text></View>
           <Text style={styles.exampleText}>{topic.example}</Text>
+          <Text style={styles.workedExampleText}>{lesson.lab.scenario}</Text>
         </View>
-        {question ? (
-          <View style={styles.quizCard}>
-            <Text style={styles.quizEyebrow}>QUICK CHECK</Text>
-            <Text style={styles.quizQuestion}>{question.prompt}</Text>
-            {question.choices.map((answer, index) => {
-              const chosen = selectedAnswer === index;
-              const correct = index === correctAnswer;
+        <LessonDiagram caption={lesson.diagram.caption} nodes={lesson.diagram.nodes} color={topic.domainColor} />
+        {lab.command && (
+          <View style={styles.commandCard}>
+            <View style={styles.commandHeader}><Ionicons name="terminal-outline" size={15} color="#A8C4FF" /><Text style={styles.commandLabel}>ILLUSTRATIVE IOS COMMAND</Text></View>
+            <Text selectable style={styles.commandCode}>{lab.command}</Text>
+            <Text style={styles.commandDisclaimer}>Example syntax only; platform support and exact configuration vary by device and software version.</Text>
+          </View>
+        )}
+        <Pressable style={styles.tutorPromptCard} onPress={onAskTutor}>
+          <View style={styles.tutorPromptIcon}><Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.blue} /></View>
+          <View style={styles.flexOne}>
+            <Text style={styles.tutorPromptTitle}>Need this explained another way?</Text>
+            <Text style={styles.tutorPromptCopy}>Ask the offline course tutor about this lesson</Text>
+          </View>
+          <Ionicons name="arrow-forward" size={16} color={colors.blue} />
+        </Pressable>
+        <View style={styles.quizCard}>
+          <Text style={styles.quizEyebrow}>CHECK YOUR UNDERSTANDING</Text>
+          <Text style={styles.quizQuestion}>{question.prompt}</Text>
+          {question.choices.map((answer, index) => {
+            const chosen = selectedAnswer === index;
+            const correct = index === correctAnswer;
+            return (
+              <Pressable
+                key={answer}
+                onPress={() => onSelectAnswer(index)}
+                style={[
+                  styles.answerOption,
+                  chosen && correct && styles.answerCorrect,
+                  chosen && !correct && styles.answerIncorrect,
+                  selectedAnswer !== null && correct && styles.answerCorrect,
+                ]}
+              >
+                <View style={[styles.answerRadio, (chosen || (selectedAnswer !== null && correct)) && styles.answerRadioSelected]}>
+                  {(chosen || (selectedAnswer !== null && correct)) && <View style={styles.answerRadioDot} />}
+                </View>
+                <Text style={styles.answerText}>{answer}</Text>
+                {selectedAnswer !== null && correct && <Ionicons name="checkmark-circle" size={18} color={colors.green} />}
+              </Pressable>
+            );
+          })}
+          {selectedAnswer !== null && (
+            <View style={[styles.answerFeedback, selectedAnswer === correctAnswer ? styles.feedbackGood : styles.feedbackTry]}>
+              <Text style={styles.feedbackText}>{selectedAnswer === correctAnswer ? question.explanation : `Review the explanation: ${question.explanation}`}</Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.labGuideCard}>
+          <View style={styles.labGuideHeader}>
+            <View style={styles.labGuideIcon}><Ionicons name="construct-outline" size={19} color="#FFFFFF" /></View>
+            <View style={styles.flexOne}>
+              <Text style={styles.labGuideTitle}>Hands-on lab</Text>
+              <Text style={styles.labGuideSubtitle}>Practice the idea, one step at a time</Text>
+            </View>
+            <View style={styles.labTimeBadge}><Ionicons name="time-outline" size={12} color={colors.blue} /><Text style={styles.labTimeText}>5 MIN</Text></View>
+          </View>
+          <Text style={styles.labTaskTitle}>{lab.title}</Text>
+          <Text style={styles.labTaskScenario}>{lab.scenario}</Text>
+          <Text style={styles.labTaskLabel}>YOUR STEPS</Text>
+          {lab.steps.map((step, index) => {
+            const stepComplete = completedLabSteps[index] ?? false;
+            return (
+              <Pressable key={`${topic.id}-lab-${index}`} onPress={() => onToggleLabStep(index)} style={styles.labStepRow}>
+                <View style={[styles.labStepCheck, stepComplete && styles.labStepCheckDone]}>
+                  {stepComplete && <Ionicons name="checkmark" size={13} color="#FFFFFF" />}
+                </View>
+                <Text style={[styles.labStepText, stepComplete && styles.labStepTextDone]}>{step}</Text>
+              </Pressable>
+            );
+          })}
+          <View style={styles.labCheckCard}>
+            <Text style={styles.labTaskLabel}>LAB CHECK</Text>
+            <Text style={styles.labCheckQuestion}>{lab.check}</Text>
+            {lab.choices.map((choice, index) => {
+              const selected = selectedLabAnswer === index;
+              const correct = index === lab.answer;
               return (
                 <Pressable
-                  key={answer}
-                  onPress={() => onSelectAnswer(index)}
-                  style={[
-                    styles.answerOption,
-                    chosen && correct && styles.answerCorrect,
-                    chosen && !correct && styles.answerIncorrect,
-                    selectedAnswer !== null && correct && styles.answerCorrect,
-                  ]}
+                  key={`${topic.id}-lab-answer-${index}`}
+                  onPress={() => onSelectLabAnswer(index)}
+                  style={[styles.labAnswerOption, selected && (correct ? styles.answerCorrect : styles.answerIncorrect), selectedLabAnswer !== null && correct && styles.answerCorrect]}
                 >
-                  <View style={[styles.answerRadio, (chosen || (selectedAnswer !== null && correct)) && styles.answerRadioSelected]}>
-                    {(chosen || (selectedAnswer !== null && correct)) && <View style={styles.answerRadioDot} />}
+                  <View style={[styles.answerRadio, (selected || (selectedLabAnswer !== null && correct)) && styles.answerRadioSelected]}>
+                    {(selected || (selectedLabAnswer !== null && correct)) && <View style={styles.answerRadioDot} />}
                   </View>
-                  <Text style={styles.answerText}>{answer}</Text>
-                  {selectedAnswer !== null && correct && <Ionicons name="checkmark-circle" size={18} color={colors.green} />}
+                  <Text style={styles.answerText}>{choice}</Text>
                 </Pressable>
               );
             })}
-            {selectedAnswer !== null && (
-              <View style={[styles.answerFeedback, selectedAnswer === correctAnswer ? styles.feedbackGood : styles.feedbackTry]}>
-                <Text style={styles.feedbackText}>
-                  {selectedAnswer === correctAnswer
-                    ? question.explanation
-                    : `Not quite. ${question.explanation}`}
-                </Text>
+            {selectedLabAnswer !== null && (
+              <View style={[styles.answerFeedback, selectedLabAnswer === lab.answer ? styles.feedbackGood : styles.feedbackTry]}>
+                <Text style={styles.feedbackText}>{selectedLabAnswer === lab.answer ? lab.explanation : `Try the steps once more. ${lab.explanation}`}</Text>
               </View>
             )}
           </View>
-        ) : (
-          <View style={styles.keyIdeaCard}>
-            <Ionicons name="bookmark-outline" size={17} color={colors.blue} />
-            <View style={styles.flexOne}>
-              <Text style={styles.keyIdeaLabel}>KEY IDEA</Text>
-              <Text style={styles.keyIdeaText}>{topic.explanation}</Text>
+          {labComplete && (
+            <View style={styles.labSuccess}>
+              <Ionicons name="checkmark-circle" size={17} color={colors.green} />
+              <Text style={styles.labSuccessText}>Nice work—your lab is complete.</Text>
             </View>
-          </View>
-        )}
+          )}
+        </View>
       </ScrollView>
       <View style={styles.lessonFooter}>
         <Pressable
           onPress={onComplete}
-          disabled={!completed && selectedAnswer !== correctAnswer}
-          style={[styles.primaryButton, !completed && selectedAnswer !== correctAnswer && styles.primaryButtonDisabled]}
+          disabled={!completed && !lessonComplete}
+          style={[styles.primaryButton, !completed && !lessonComplete && styles.primaryButtonDisabled]}
         >
-          <Text style={styles.primaryButtonText}>{completed ? "Back to learning path" : "Mark lesson complete"}</Text>
+          <Text style={styles.primaryButtonText}>{completed ? "Back to learning path" : lessonComplete ? "Complete lesson" : "Finish the quick check and lab"}</Text>
           <Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
         </Pressable>
       </View>
@@ -1016,34 +1142,70 @@ function PracticeExam({
   );
 }
 
-function SubnetVisual() {
+function LessonDiagram({
+  caption, nodes, color,
+}: {
+  caption: string; nodes: { title: string; subtitle: string }[]; color: string;
+}) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selectedNode = nodes[selectedIndex];
   return (
-    <View style={styles.subnetVisual}>
-      <Text style={styles.visualCaption}>A /26 SUBNET AT A GLANCE</Text>
-      <View style={styles.addressBlocks}>
-        <View style={styles.networkBlock}><Text style={styles.blockTop}>NETWORK</Text><Text style={styles.blockBottom}>.0</Text></View>
-        <View style={styles.hostBlock}><Text style={styles.blockTop}>USABLE HOSTS</Text><Text style={styles.blockBottom}>.1 – .62</Text></View>
-        <View style={styles.broadcastBlock}><Text style={styles.blockTop}>BROADCAST</Text><Text style={styles.blockBottom}>.63</Text></View>
+    <View style={styles.diagramCard}>
+      <View style={styles.diagramHeading}>
+        <View style={[styles.diagramHeadingIcon, { backgroundColor: `${color}18` }]}><Ionicons name="image-outline" size={16} color={color} /></View>
+        <View style={styles.flexOne}>
+          <Text style={styles.diagramEyebrow}>VISUAL EXPLANATION</Text>
+          <Text style={styles.diagramCaption}>{caption}</Text>
+        </View>
       </View>
-      <View style={styles.bitRow}><Text style={styles.bitLabel}>HOST BITS</Text><Text style={styles.bitValue}>6 bits  →  2⁶ = 64 addresses</Text></View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.diagramFlow}>
+        {nodes.map((node, index) => (
+          <View key={`${node.title}-${index}`} style={styles.diagramFlowItem}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Diagram step ${index + 1}: ${node.title}. ${node.subtitle}`}
+              accessibilityState={{ selected: index === selectedIndex }}
+              onPress={() => setSelectedIndex(index)}
+              style={[styles.diagramNode, { borderColor: index === selectedIndex ? color : `${color}55`, backgroundColor: index === selectedIndex ? `${color}0C` : "#FBFCFE" }]}
+            >
+              <View style={styles.diagramNodeTop}>
+                <View style={[styles.diagramNodeIcon, { backgroundColor: `${color}18` }]}>
+                  <Ionicons name={diagramNodeIcon(`${node.title} ${node.subtitle}`)} size={15} color={color} />
+                </View>
+                <View style={[styles.diagramNodeIndex, { backgroundColor: index === selectedIndex ? color : `${color}80` }]}><Text style={styles.diagramNodeIndexText}>{index + 1}</Text></View>
+              </View>
+              <Text style={styles.diagramNodeTitle}>{node.title}</Text>
+              <Text style={styles.diagramNodeSubtitle}>{node.subtitle}</Text>
+            </Pressable>
+            {index < nodes.length - 1 && <Ionicons name="arrow-forward" size={15} color={color} style={styles.diagramArrow} />}
+          </View>
+        ))}
+      </ScrollView>
+      <View style={styles.diagramSelectedNote}>
+        <Ionicons name="information-circle-outline" size={15} color={color} />
+        <Text style={styles.diagramSelectedText}><Text style={styles.diagramSelectedTitle}>{selectedNode.title}: </Text>{selectedNode.subtitle}</Text>
+      </View>
+      <Text style={styles.diagramFootnote}>Original course illustration · tap each step to focus the explanation.</Text>
     </View>
   );
 }
 
-function GenericVisual({ topic }: { topic: Topic }) {
-  const words = topic.title.split(" ").filter(Boolean).slice(0, 4);
-  return (
-    <View style={styles.genericVisual}>
-      <View style={styles.genericVisualIcon}><Ionicons name="git-network-outline" size={28} color={colors.blue} /></View>
-      <View style={styles.genericVisualDivider} />
-      <View style={styles.genericConcepts}>
-        {words.map((word, index) => (
-          <View key={`${word}-${index}`} style={styles.conceptPill}><Text style={styles.conceptText}>{word}</Text></View>
-        ))}
-      </View>
-      <Text style={styles.visualCaption}>CONCEPT SNAPSHOT</Text>
-    </View>
-  );
+function diagramNodeIcon(description: string): keyof typeof Ionicons.glyphMap {
+  const words = description.toLowerCase();
+  if (/wireless|wifi|radio|ssid|access point|ap\b/.test(words)) return "wifi-outline";
+  if (/router|gateway|routing/.test(words)) return "git-branch-outline";
+  if (/switch|vlan|trunk|etherchannel|port-channel/.test(words)) return "git-network-outline";
+  if (/server|controller|cloud|internet|public network/.test(words)) return "server-outline";
+  if (/firewall|security|acl|permit|deny|guard|vpn/.test(words)) return "shield-checkmark-outline";
+  if (/client|host|endpoint|workstation|user/.test(words)) return "laptop-outline";
+  if (/dns|name|resolve/.test(words)) return "search-outline";
+  if (/packet|frame|datagram|message/.test(words)) return "cube-outline";
+  if (/route|path|forward|next hop/.test(words)) return "navigate-outline";
+  if (/fiber|cable|media|link|transceiver/.test(words)) return "swap-horizontal-outline";
+  if (/time|clock|ntp/.test(words)) return "time-outline";
+  if (/api|json|automation|code|script/.test(words)) return "code-slash-outline";
+  if (/monitor|log|telemetry/.test(words)) return "analytics-outline";
+  return "ellipse-outline";
 }
 
 function TabBar({ current, onChange }: { current: Tab; onChange: (tab: Tab) => void }) {
@@ -1071,7 +1233,7 @@ function TabBar({ current, onChange }: { current: Tab; onChange: (tab: Tab) => v
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
-  app: { flex: 1 },
+  app: { flex: 1, width: "100%", maxWidth: 620, alignSelf: "center" },
   scrollContent: { paddingHorizontal: 22, paddingTop: 10, paddingBottom: 28 },
   header: { marginBottom: 22 },
   brandRow: { flexDirection: "row", alignItems: "center", marginBottom: 25 },
@@ -1270,28 +1432,54 @@ const styles = StyleSheet.create({
   lessonTagText: { fontSize: 8, fontWeight: "800", letterSpacing: 0.7 },
   lessonTitle: { color: colors.ink, fontSize: 26, lineHeight: 31, fontWeight: "800", letterSpacing: -0.7 },
   lessonLead: { color: "#637187", fontSize: 12, lineHeight: 19, marginTop: 8 },
+  learningCard: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: colors.line, borderRadius: 14, padding: 13, marginTop: 16 },
+  learningCardHeader: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 7 },
+  learningCardIcon: { width: 33, height: 33, borderRadius: 10, backgroundColor: "#F2F5FA", alignItems: "center", justifyContent: "center" },
+  learningCardTitle: { color: colors.ink, fontSize: 11, fontWeight: "800" },
+  learningCardSub: { color: colors.muted, fontSize: 8, marginTop: 2 },
+  objectiveRow: { flexDirection: "row", alignItems: "flex-start", gap: 9, paddingVertical: 6 },
+  objectiveNumber: { width: 20, height: 20, borderRadius: 7, alignItems: "center", justifyContent: "center" },
+  objectiveNumberText: { fontSize: 8, fontWeight: "900" },
+  objectiveText: { flex: 1, color: "#56647A", fontSize: 9, lineHeight: 14, paddingTop: 2 },
+  lessonSectionTitle: { color: colors.ink, fontSize: 14, fontWeight: "800", marginTop: 19, marginBottom: 8 },
+  deepDiveCard: { flexDirection: "row", alignItems: "flex-start", gap: 9, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: colors.line, borderRadius: 12, padding: 12, marginBottom: 7 },
+  deepDiveMarker: { width: 24, height: 24, borderRadius: 8, backgroundColor: colors.paleBlue, alignItems: "center", justifyContent: "center" },
+  deepDiveMarkerText: { color: colors.blue, fontSize: 8, fontWeight: "900" },
+  deepDiveText: { flex: 1, color: "#536176", fontSize: 10, lineHeight: 16 },
   lessonVisual: { marginTop: 17, marginBottom: 12 },
-  subnetVisual: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 14 },
-  visualCaption: { color: "#8C99AA", fontSize: 8, fontWeight: "800", letterSpacing: 0.8, marginBottom: 12 },
-  addressBlocks: { flexDirection: "row", height: 70, borderRadius: 9, overflow: "hidden" },
-  networkBlock: { width: "18%", backgroundColor: "#E9A75E", alignItems: "center", justifyContent: "center" },
-  hostBlock: { width: "66%", backgroundColor: "#4F89F7", alignItems: "center", justifyContent: "center" },
-  broadcastBlock: { width: "16%", backgroundColor: "#D77978", alignItems: "center", justifyContent: "center" },
-  blockTop: { color: "#FFFFFF", fontSize: 6, letterSpacing: 0.4, fontWeight: "800" },
-  blockBottom: { color: "#FFFFFF", fontSize: 10, fontWeight: "800", marginTop: 4 },
-  bitRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 },
-  bitLabel: { color: colors.muted, fontSize: 8, fontWeight: "800", letterSpacing: 0.6 },
-  bitValue: { color: colors.ink, fontSize: 9, fontWeight: "700" },
-  genericVisual: { minHeight: 150, borderRadius: 15, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: colors.line, padding: 15, flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
-  genericVisualIcon: { width: 53, height: 53, borderRadius: 17, backgroundColor: colors.paleBlue, alignItems: "center", justifyContent: "center" },
-  genericVisualDivider: { width: 25, height: 2, backgroundColor: "#C9D8F2", marginHorizontal: 12 },
-  genericConcepts: { flex: 1, flexDirection: "row", flexWrap: "wrap", gap: 5 },
-  conceptPill: { paddingHorizontal: 7, paddingVertical: 5, backgroundColor: "#F1F5FB", borderRadius: 7 },
-  conceptText: { color: "#557092", fontSize: 8, fontWeight: "700" },
-  exampleCard: { backgroundColor: "#FFF9F0", borderWidth: 1, borderColor: "#F5EAD8", borderRadius: 14, padding: 13, marginBottom: 12 },
+  diagramCard: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 13, marginTop: 15, marginBottom: 13 },
+  diagramHeading: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 14 },
+  diagramHeadingIcon: { width: 31, height: 31, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  diagramEyebrow: { color: colors.muted, fontSize: 7, letterSpacing: 0.9, fontWeight: "800" },
+  diagramCaption: { color: colors.ink, fontSize: 10, fontWeight: "800", marginTop: 3 },
+  diagramFlow: { alignItems: "center", paddingVertical: 3, paddingRight: 4 },
+  diagramFlowItem: { flexDirection: "row", alignItems: "center" },
+  diagramNode: { width: 115, minHeight: 95, borderWidth: 1, borderRadius: 12, backgroundColor: "#FBFCFE", padding: 9, alignItems: "flex-start" },
+  diagramNodeTop: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 7 },
+  diagramNodeIcon: { width: 25, height: 25, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  diagramNodeIndex: { width: 18, height: 18, borderRadius: 6, alignItems: "center", justifyContent: "center" },
+  diagramNodeIndexText: { color: "#FFFFFF", fontSize: 8, fontWeight: "900" },
+  diagramNodeTitle: { color: colors.ink, fontSize: 9, lineHeight: 12, fontWeight: "800" },
+  diagramNodeSubtitle: { color: colors.muted, fontSize: 7, lineHeight: 10, marginTop: 4 },
+  diagramArrow: { marginHorizontal: 6 },
+  diagramSelectedNote: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginTop: 10, paddingHorizontal: 2 },
+  diagramSelectedText: { flex: 1, color: "#637187", fontSize: 8, lineHeight: 12 },
+  diagramSelectedTitle: { color: colors.ink, fontWeight: "800" },
+  diagramFootnote: { color: colors.muted, fontSize: 8, lineHeight: 12, marginTop: 11 },
+  exampleCard: { backgroundColor: "#FFF9F0", borderWidth: 1, borderColor: "#F5EAD8", borderRadius: 14, padding: 13, marginTop: 14, marginBottom: 4 },
   exampleHeader: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 7 },
   exampleLabel: { color: "#AA782F", fontSize: 8, fontWeight: "800", letterSpacing: 0.8 },
   exampleText: { color: "#63573F", fontSize: 10, lineHeight: 16 },
+  workedExampleText: { color: "#796849", fontSize: 9, lineHeight: 14, marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#F0E3D0" },
+  commandCard: { backgroundColor: "#18263A", borderRadius: 13, padding: 12, marginTop: 12 },
+  commandHeader: { flexDirection: "row", alignItems: "center", gap: 7 },
+  commandLabel: { color: "#AFC3E1", fontSize: 7, fontWeight: "800", letterSpacing: 0.8 },
+  commandCode: { color: "#E7F0FF", fontFamily: "monospace", fontSize: 9, lineHeight: 16, marginTop: 9 },
+  commandDisclaimer: { color: "#A8B6C9", fontSize: 7, lineHeight: 11, marginTop: 9 },
+  tutorPromptCard: { flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: colors.paleBlue, borderRadius: 12, padding: 11, marginTop: 12, marginBottom: 13 },
+  tutorPromptIcon: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  tutorPromptTitle: { color: colors.ink, fontSize: 9, fontWeight: "800" },
+  tutorPromptCopy: { color: colors.muted, fontSize: 8, marginTop: 3 },
   quizCard: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: colors.line, borderRadius: 14, padding: 14 },
   quizEyebrow: { color: colors.blue, fontSize: 8, letterSpacing: 1, fontWeight: "800" },
   quizQuestion: { color: colors.ink, fontSize: 12, lineHeight: 18, fontWeight: "700", marginTop: 6, marginBottom: 10 },
@@ -1306,9 +1494,26 @@ const styles = StyleSheet.create({
   feedbackGood: { backgroundColor: colors.paleGreen },
   feedbackTry: { backgroundColor: "#FFF6E8" },
   feedbackText: { color: "#506557", fontSize: 9, lineHeight: 14 },
-  keyIdeaCard: { flexDirection: "row", gap: 9, backgroundColor: colors.paleBlue, borderRadius: 13, padding: 13 },
-  keyIdeaLabel: { color: colors.blue, fontSize: 8, letterSpacing: 0.8, fontWeight: "800", marginBottom: 5 },
-  keyIdeaText: { color: "#53647D", fontSize: 10, lineHeight: 16 },
+  labGuideCard: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 13, marginTop: 14 },
+  labGuideHeader: { flexDirection: "row", alignItems: "center", gap: 9 },
+  labGuideIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#233C5E", alignItems: "center", justifyContent: "center" },
+  labGuideTitle: { color: colors.ink, fontSize: 11, fontWeight: "800" },
+  labGuideSubtitle: { color: colors.muted, fontSize: 8, marginTop: 3 },
+  labTimeBadge: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.paleBlue, borderRadius: 9, paddingHorizontal: 7, paddingVertical: 5 },
+  labTimeText: { color: colors.blue, fontSize: 7, fontWeight: "800" },
+  labTaskTitle: { color: colors.ink, fontSize: 12, fontWeight: "800", marginTop: 14 },
+  labTaskScenario: { color: "#637187", fontSize: 9, lineHeight: 14, marginTop: 5 },
+  labTaskLabel: { color: colors.muted, fontSize: 7, letterSpacing: 0.9, fontWeight: "900", marginTop: 13, marginBottom: 6 },
+  labStepRow: { flexDirection: "row", alignItems: "flex-start", gap: 9, paddingVertical: 7 },
+  labStepCheck: { width: 20, height: 20, borderRadius: 7, borderWidth: 1.3, borderColor: "#C5CDD8", alignItems: "center", justifyContent: "center" },
+  labStepCheckDone: { borderColor: colors.green, backgroundColor: colors.green },
+  labStepText: { flex: 1, color: "#536176", fontSize: 9, lineHeight: 14, paddingTop: 3 },
+  labStepTextDone: { color: colors.green },
+  labCheckCard: { backgroundColor: "#F6F8FC", borderRadius: 11, padding: 10, marginTop: 7 },
+  labCheckQuestion: { color: colors.ink, fontSize: 10, lineHeight: 15, fontWeight: "700", marginBottom: 6 },
+  labAnswerOption: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: colors.line, borderRadius: 9, paddingHorizontal: 8, marginTop: 5 },
+  labSuccess: { flexDirection: "row", alignItems: "center", gap: 7, backgroundColor: colors.paleGreen, borderRadius: 9, padding: 9, marginTop: 10 },
+  labSuccessText: { color: colors.green, fontSize: 9, fontWeight: "800" },
   lessonFooter: { paddingHorizontal: 22, paddingTop: 10, paddingBottom: 12, backgroundColor: colors.background },
   primaryButton: { height: 48, backgroundColor: colors.blue, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 },
   primaryButtonDisabled: { backgroundColor: "#A8BCE1" },

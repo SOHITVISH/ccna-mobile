@@ -23,10 +23,13 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Type-check
         run: npm run typecheck
 
       - name: Validate Expo configuration
         run: npx expo config --type public
+
+      - name: Build the web app
+        run: npm run build:web
