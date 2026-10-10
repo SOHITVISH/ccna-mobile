@@ -34,7 +34,9 @@ The practice exams are learning aids, not replicas of Cisco exam questions or pr
 
 ## GitHub Actions
 
-The `React Native CI` workflow runs on pushes to `main`, pull requests, and manual dispatch. It installs Node.js 22 dependencies, runs the TypeScript check, validates the Expo public configuration, and exports the web app.
+The `React Native CI` workflow runs on pushes to `main`, pull requests, and manual dispatch. It installs Node.js 22 dependencies, runs the TypeScript check and assessment tests, validates the Expo public configuration, and exports the web app.
+
+The `Deploy PacketPath to GitHub Pages` workflow publishes the web app on pushes to `main` and can be run manually from the Actions tab. The live site is [https://sohitvish.github.io/ccna-mobile/](https://sohitvish.github.io/ccna-mobile/). Expo uses a GitHub Pages base path only in the deployment build; local Expo development keeps using the root path.
 
 ## Cisco official references
 
